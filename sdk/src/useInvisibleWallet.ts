@@ -819,19 +819,50 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
 
+            // Fetch wallet contract nonce (required as sigVec[4] in __check_auth)
+            const nonceDummyKp = Keypair.random();
+            const nonceTx = new TransactionBuilder(new Account(nonceDummyKp.publicKey(), '0'), {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(walletContract.call('get_nonce'))
+                .setTimeout(30)
+                .build();
+            const nonceSim = await server.simulateTransaction(nonceTx);
+            if (SorobanRpc.Api.isSimulationError(nonceSim)) {
+                throw new Error(`Nonce fetch failed: ${nonceSim.error}`);
+            }
+            const nonceSimResult = (nonceSim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
+            if (!nonceSimResult) throw new Error('No nonce result from simulation');
+            const contractNonce = scValToNative(nonceSimResult.retval) as bigint;
+
             // Sign auth entries that require the wallet's WebAuthn authorization.
+            // Payload = SHA-256(HashIdPreimageSorobanAuthorization XDR) — matches what the
+            // Soroban host passes to __check_auth. sigVec[4] is the contract's monotonic nonce.
             const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse;
             const authEntries = successSim.result?.auth;
             if (authEntries) {
+                const networkIdBytes = new Uint8Array(
+                    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(networkPassphrase))
+                );
+
                 for (const parsed of authEntries) {
                     const cred = parsed.credentials();
                     if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
                         continue;
                     }
 
-                    const invocationXdr = parsed.rootInvocation().toXDR();
+                    const addrCred = cred.address();
+                    const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+                        new xdr.HashIdPreimageSorobanAuthorization({
+                            networkId: Buffer.from(networkIdBytes),
+                            nonce: addrCred.nonce(),
+                            invocation: parsed.rootInvocation(),
+                            signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                        })
+                    );
                     const payloadHash = new Uint8Array(
-                        await crypto.subtle.digest('SHA-256', new Uint8Array(invocationXdr))
+                        await crypto.subtle.digest('SHA-256', new Uint8Array(preimage.toXDR()))
                     );
 
                     const webAuthnSig = await signAuthEntry(payloadHash);
@@ -842,9 +873,9 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                         nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
                         nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
                         nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
+                        nativeToScVal(contractNonce, { type: 'u64' }),
                     ]);
 
-                    const addrCred = cred.address();
                     parsed.credentials(
                         xdr.SorobanCredentials.sorobanCredentialsAddress(
                             new xdr.SorobanAddressCredentials({
@@ -1140,19 +1171,50 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
 
+            // Fetch wallet contract nonce (required as sigVec[4] in __check_auth)
+            const nonceDummyKp = Keypair.random();
+            const nonceTx = new TransactionBuilder(new Account(nonceDummyKp.publicKey(), '0'), {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(walletContract.call('get_nonce'))
+                .setTimeout(30)
+                .build();
+            const nonceSim = await server.simulateTransaction(nonceTx);
+            if (SorobanRpc.Api.isSimulationError(nonceSim)) {
+                throw new Error(`Nonce fetch failed: ${nonceSim.error}`);
+            }
+            const nonceSimResult = (nonceSim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
+            if (!nonceSimResult) throw new Error('No nonce result from simulation');
+            const contractNonce = scValToNative(nonceSimResult.retval) as bigint;
+
             // Sign auth entries that require the wallet's WebAuthn authorization.
+            // Payload = SHA-256(HashIdPreimageSorobanAuthorization XDR) — matches what the
+            // Soroban host passes to __check_auth. sigVec[4] is the contract's monotonic nonce.
             const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse;
             const authEntries = successSim.result?.auth;
             if (authEntries) {
+                const networkIdBytes = new Uint8Array(
+                    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(networkPassphrase))
+                );
+
                 for (const parsed of authEntries) {
                     const cred = parsed.credentials();
                     if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
                         continue;
                     }
 
-                    const invocationXdr = parsed.rootInvocation().toXDR();
+                    const addrCred = cred.address();
+                    const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+                        new xdr.HashIdPreimageSorobanAuthorization({
+                            networkId: Buffer.from(networkIdBytes),
+                            nonce: addrCred.nonce(),
+                            invocation: parsed.rootInvocation(),
+                            signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                        })
+                    );
                     const payloadHash = new Uint8Array(
-                        await crypto.subtle.digest('SHA-256', new Uint8Array(invocationXdr))
+                        await crypto.subtle.digest('SHA-256', new Uint8Array(preimage.toXDR()))
                     );
 
                     const webAuthnSig = await signAuthEntry(payloadHash);
@@ -1163,9 +1225,9 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                         nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
                         nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
                         nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
+                        nativeToScVal(contractNonce, { type: 'u64' }),
                     ]);
 
-                    const addrCred = cred.address();
                     parsed.credentials(
                         xdr.SorobanCredentials.sorobanCredentialsAddress(
                             new xdr.SorobanAddressCredentials({
