@@ -185,8 +185,14 @@ export async function sweepContractBalance(
     throw new Error(`Simulation failed: ${sim.error}`)
   }
 
-  // 4. Sign Soroban auth entries BEFORE assembly so assembleTransaction picks
-  //    up the signed credentials when it reads sim.result.auth.
+  // 4. Sign Soroban auth entries. Recording-mode simulation returns auth
+  //    entries with signatureExpirationLedger=0 — the SDK is expected to
+  //    set a real future ledger before signing. The preimage we hash AND
+  //    the credential we attach must use the same value, otherwise the
+  //    host computes a different signature_payload and verification fails.
+  const latestLedger = await rpc.getLatestLedger()
+  const validUntilLedger = latestLedger.sequence + 100 // ~8 min of headroom on testnet
+
   const successSim  = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse
   const authEntries = successSim.result?.auth
   if (authEntries) {
@@ -206,7 +212,7 @@ export async function sweepContractBalance(
           networkId:                 Buffer.from(networkIdBytes),
           nonce:                     addrCred.nonce(),
           invocation:                parsed.rootInvocation(),
-          signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+          signatureExpirationLedger: validUntilLedger,
         })
       )
       const payloadHash = new Uint8Array(
@@ -232,7 +238,7 @@ export async function sweepContractBalance(
           new xdr.SorobanAddressCredentials({
             address:                   addrCred.address(),
             nonce:                     addrCred.nonce(),
-            signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+            signatureExpirationLedger: validUntilLedger,
             signature:                 sigVec,
           })
         )

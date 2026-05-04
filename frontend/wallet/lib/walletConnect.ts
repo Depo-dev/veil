@@ -235,8 +235,13 @@ async function signXdrPayload(
     throw new Error(`Simulation failed: ${sim.error}`)
   }
 
-  // Sign auth entries BEFORE assembly — assembleTransaction reads sim.result.auth
-  // at call time, so signing after would leave unsigned credentials in the tx.
+  // Recording-mode simulation returns auth entries with
+  // signatureExpirationLedger=0 — set a real future ledger so the host
+  // doesn't reject the auth as expired. Must use the same value in both
+  // the signed preimage and the credential we attach.
+  const latestLedger = await rpc.getLatestLedger()
+  const validUntilLedger = latestLedger.sequence + 100
+
   const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse
   const authEntries = successSim.result?.auth
 
@@ -260,7 +265,7 @@ async function signXdrPayload(
           networkId: Buffer.from(networkIdBytes),
           nonce: addrCred.nonce(),
           invocation: parsed.rootInvocation(),
-          signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+          signatureExpirationLedger: validUntilLedger,
         }),
       )
       const payloadHash = new Uint8Array(
@@ -288,7 +293,7 @@ async function signXdrPayload(
           new xdr.SorobanAddressCredentials({
             address: addrCred.address(),
             nonce: addrCred.nonce(),
-            signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+            signatureExpirationLedger: validUntilLedger,
             signature: sigVec,
           }),
         ),
